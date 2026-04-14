@@ -17,7 +17,12 @@ class LocalAsrEngine:
 
     def transcribe(self, audio_path: Path) -> str:
         model = self._load_model()
-        segments, _info = model.transcribe(str(audio_path), language=self.config.language, vad_filter=True)
+        segments, _info = model.transcribe(
+            str(audio_path),
+            language=self.config.language,
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": self.config.vad_min_silence_ms},
+        )
         return " ".join(segment.text.strip() for segment in segments).strip()
 
     def _load_model(self) -> Any:
@@ -30,8 +35,9 @@ class LocalAsrEngine:
                     "`python -m pip install -r backend/requirements.txt`."
                 ) from exc
 
+            model_ref = self.config.model_path or self.config.model_name
             self._model = WhisperModel(
-                self.config.model_name,
+                model_ref,
                 device=self.config.device,
                 compute_type=self.config.compute_type,
             )
@@ -56,9 +62,11 @@ class AsrRequestHandler(BaseHTTPRequestHandler):
             {
                 "status": "ok",
                 "model": CONFIG.model_name,
+                "modelPath": CONFIG.model_path,
                 "device": CONFIG.device,
                 "computeType": CONFIG.compute_type,
                 "language": CONFIG.language,
+                "vadMinSilenceMs": CONFIG.vad_min_silence_ms,
             }
         )
 
@@ -127,7 +135,8 @@ def main() -> None:
     server = ThreadingHTTPServer((CONFIG.host, CONFIG.port), AsrRequestHandler)
     print(
         f"Local ASR service listening on http://{CONFIG.host}:{CONFIG.port} "
-        f"(model={CONFIG.model_name}, device={CONFIG.device}, compute_type={CONFIG.compute_type})"
+        f"(model={CONFIG.model_path or CONFIG.model_name}, device={CONFIG.device}, "
+        f"compute_type={CONFIG.compute_type})"
     )
     server.serve_forever()
 

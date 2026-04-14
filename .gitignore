@@ -10,6 +10,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+backend/models/
 
 # OS / Editor
 .DS_Store

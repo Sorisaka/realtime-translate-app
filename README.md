@@ -92,6 +92,36 @@ docs/
 
 実ASRではブラウザのマイク入力を短い音声チャンクに分け、`http://127.0.0.1:8765/api/asr/transcribe` に送ります。エンドポイントは `VITE_ASR_ENDPOINT`、チャンク長は `VITE_ASR_CHUNK_MS` で変更できます。
 
+安定化用の環境変数:
+
+- `VITE_ASR_CHUNK_MS`: 既定値 `4000`
+- `VITE_ASR_MIN_CHUNK_BYTES`: 既定値 `1500`
+- `VITE_ASR_MAX_IN_FLIGHT`: 既定値 `1`
+
+## 完全オフライン運用
+
+`faster-whisper` のモデルは初回利用時に取得が必要になる場合があります。初回ネット接続なしで使う場合は、ネットワークが使える環境で事前にモデルを `backend/models/` へ配置してください。
+
+```bash
+cd /home/yukikago/projects/realtime-translate-app
+. backend/.venv/bin/activate
+python backend/scripts/download-faster-whisper-model.py --model tiny.en
+```
+
+オフライン環境ではローカルモデルパスを指定して ASR サービスを起動します。
+
+```bash
+cd /home/yukikago/projects/realtime-translate-app/backend
+. .venv/bin/activate
+ASR_MODEL_PATH=/home/yukikago/projects/realtime-translate-app/backend/models/tiny.en python -m asr_service.server
+```
+
+モデル配置先の `backend/models/` は大きなバイナリを含むため Git 管理から除外しています。
+
+## 翻訳モデル接続
+
+翻訳モデル本体はまだ実装していません。次フェーズでローカル翻訳サービスを追加するための API 契約は [docs/translation-api-contract.md](docs/translation-api-contract.md) に整理しています。
+
 ## 次フェーズ候補
 
 1. 実 ASR の長時間ストリーミングを安定化し、チャンク重複や無音区間の扱いを改善する。

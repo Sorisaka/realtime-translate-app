@@ -58,6 +58,15 @@ Content-Type: audio/webm
 - React / Vite / TypeScript は既存フロントエンドの起動に必要なため削除していない。
 - `node_modules` や lockfile の削除は既存 UI の起動確認を壊す可能性があるため行っていない。
 - Python 依存は `backend/requirements.txt` に分け、`backend/.venv` 内にのみインストールする前提にした。
+- ASR モデルは `backend/models/` に事前配置できる。大きなモデルファイルを誤ってコミットしないよう Git 管理から除外する。
+
+## ASR 安定化
+
+- Frontend は `VITE_ASR_MAX_IN_FLIGHT=1` を既定にし、ASR リクエストが詰まった時に古いチャンクを積み上げない。
+- `VITE_ASR_MIN_CHUNK_BYTES=1500` を既定にし、短すぎる無音に近いチャンクを送らない。
+- ASR 応答待ちのチャンクは `Listening...` の暫定表示にし、応答後に確定表示へ差し替える。
+- 前回確定テキストと次チャンクの先頭が重なる場合、単語単位の重複 prefix を落として表示する。
+- Backend は faster-whisper の VAD を有効化し、`ASR_VAD_MIN_SILENCE_MS` で無音判定の長さを調整できる。
 
 ## フェーズ別の仮定
 

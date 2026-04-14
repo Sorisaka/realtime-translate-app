@@ -12,7 +12,7 @@ export function TranslationPanel({ segments }: Props) {
         <span className="live-pill muted">逐次更新</span>
       </div>
       <div className="segment-list">
-        {segments.map((segment) => (
+        {segments.filter((segment) => segment.text.trim()).map((segment) => (
           <p key={segment.id} className={`segment ja segment-${segment.status}`}>
             {segment.text}
           </p>

@@ -15,7 +15,7 @@ export function TranscriptPanel({ segments, onWordClick }: Props) {
         <span className="live-pill">Mock stream</span>
       </div>
       <div className="segment-list">
-        {segments.map((segment) => (
+        {segments.filter((segment) => segment.text.trim()).map((segment) => (
           <p key={segment.id} className={`segment segment-${segment.status}`}>
             {splitWords(segment.text).map((part, index) => {
               if (/^\s+$/.test(part)) return part;

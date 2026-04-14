@@ -9,6 +9,19 @@ export class MockLectureStreamService implements LectureStreamService {
 
   start(onUpdate: (update: LectureUpdate) => void): () => void {
     return this.speechRecognition.start((transcript) => {
+      if (!transcript.text.trim()) {
+        onUpdate({
+          transcript,
+          translation: {
+            id: `translation-${transcript.id}`,
+            sourceSegmentId: transcript.id,
+            text: "",
+            status: transcript.status,
+          },
+        });
+        return;
+      }
+
       void this.translation.translate(transcript).then((translation) => {
         onUpdate({ transcript, translation });
       });
