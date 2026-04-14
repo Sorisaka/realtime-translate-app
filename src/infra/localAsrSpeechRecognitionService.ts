@@ -11,6 +11,7 @@ type LocalAsrOptions = {
 type AsrResponse = {
   text?: string;
   error?: string;
+  debug?: unknown;
 };
 
 export class LocalAsrSpeechRecognitionService implements SpeechRecognitionService {
@@ -20,64 +21,105 @@ export class LocalAsrSpeechRecognitionService implements SpeechRecognitionServic
     let stopped = false;
     let recorder: MediaRecorder | null = null;
     let stream: MediaStream | null = null;
+    let stopTimerId: number | undefined;
     let segmentIndex = 0;
     let inFlightRequests = 0;
     let lastFinalText = "";
+    let hasLoggedMimeType = false;
 
-    const startRecording = async () => {
+    const startRecordingLoop = async () => {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = this.selectMimeType();
-      recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      console.info("Local ASR MediaRecorder support", this.getMimeTypeDiagnostics());
 
-      recorder.ondataavailable = (event) => {
-        if (stopped || event.data.size < this.options.minChunkBytes) return;
-        if (inFlightRequests >= this.options.maxInFlightRequests) return;
+      const recordSegment = () => {
+        if (stopped || !stream) return;
 
-        const id = `local-asr-${segmentIndex}`;
-        segmentIndex += 1;
-        inFlightRequests += 1;
+        const mimeType = this.selectMimeType();
+        const chunks: Blob[] = [];
+        const segmentStartedAt = Date.now();
+        recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        if (!hasLoggedMimeType) {
+          console.info("Local ASR recorder mimeType", recorder.mimeType || "browser-default");
+          hasLoggedMimeType = true;
+        }
 
-        onSegment({
-          id,
-          text: "Listening...",
-          status: "partial",
-          startedAtMs: Date.now() - this.options.chunkMs,
-        });
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            chunks.push(event.data);
+          }
+        };
 
-        void this.transcribe(event.data).then((text) => {
-          if (stopped) return;
-          const dedupedText = this.removeRepeatedPrefix(text, lastFinalText);
-          lastFinalText = text.trim();
+        recorder.onstop = () => {
+          const completedAtMs = Date.now();
+          const blobType = recorder?.mimeType || mimeType || chunks[0]?.type || "application/octet-stream";
+          const audio = new Blob(chunks, { type: blobType });
+
+          if (!stopped) {
+            recordSegment();
+          }
+
+          if (stopped || audio.size < this.options.minChunkBytes) return;
+          if (inFlightRequests >= this.options.maxInFlightRequests) return;
+
+          const id = `local-asr-${segmentIndex}`;
+          segmentIndex += 1;
+          inFlightRequests += 1;
+
           onSegment({
             id,
-            text: dedupedText,
-            status: "final",
-            startedAtMs: Date.now() - this.options.chunkMs,
-            completedAtMs: Date.now(),
+            text: "Listening...",
+            status: "partial",
+            startedAtMs: segmentStartedAt,
           });
-        }).catch((error) => {
-          console.error("Local ASR request failed", error);
-          onSegment({
-            id,
-            text: "",
-            status: "final",
-            startedAtMs: Date.now() - this.options.chunkMs,
-            completedAtMs: Date.now(),
-          });
-        }).finally(() => {
-          inFlightRequests -= 1;
-        });
+
+          void this.transcribe(audio)
+            .then((text) => {
+              if (stopped) return;
+              const dedupedText = this.removeRepeatedPrefix(text, lastFinalText);
+              lastFinalText = text.trim();
+              onSegment({
+                id,
+                text: dedupedText,
+                status: "final",
+                startedAtMs: segmentStartedAt,
+                completedAtMs,
+              });
+            })
+            .catch((error) => {
+              console.error("Local ASR request failed", error);
+              onSegment({
+                id,
+                text: "",
+                status: "final",
+                startedAtMs: segmentStartedAt,
+                completedAtMs,
+              });
+            })
+            .finally(() => {
+              inFlightRequests -= 1;
+            });
+        };
+
+        recorder.start();
+        stopTimerId = window.setTimeout(() => {
+          if (recorder && recorder.state === "recording") {
+            recorder.stop();
+          }
+        }, this.options.chunkMs);
       };
 
-      recorder.start(this.options.chunkMs);
+      recordSegment();
     };
 
-    void startRecording().catch((error) => {
+    void startRecordingLoop().catch((error) => {
       console.error("Failed to start local ASR microphone capture", error);
     });
 
     return () => {
       stopped = true;
+      if (stopTimerId) {
+        window.clearTimeout(stopTimerId);
+      }
       if (recorder && recorder.state !== "inactive") {
         recorder.stop();
       }
@@ -97,12 +139,21 @@ export class LocalAsrSpeechRecognitionService implements SpeechRecognitionServic
       throw new Error(payload.error ?? `ASR request failed with status ${response.status}`);
     }
 
+    if (payload.debug) {
+      console.info("Local ASR debug", payload.debug);
+    }
+
     return payload.text?.trim() ?? "";
   }
 
   private selectMimeType(): string {
     const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg"];
     return candidates.find((type) => MediaRecorder.isTypeSupported(type)) ?? "";
+  }
+
+  private getMimeTypeDiagnostics(): Record<string, boolean> {
+    const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg"];
+    return Object.fromEntries(candidates.map((type) => [type, MediaRecorder.isTypeSupported(type)]));
   }
 
   private removeRepeatedPrefix(text: string, previousText: string): string {

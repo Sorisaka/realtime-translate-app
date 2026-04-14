@@ -65,8 +65,10 @@ Content-Type: audio/webm
 - Frontend は `VITE_ASR_MAX_IN_FLIGHT=1` を既定にし、ASR リクエストが詰まった時に古いチャンクを積み上げない。
 - `VITE_ASR_MIN_CHUNK_BYTES=1500` を既定にし、短すぎる無音に近いチャンクを送らない。
 - ASR 応答待ちのチャンクは `Listening...` の暫定表示にし、応答後に確定表示へ差し替える。
+- Frontend は `MediaRecorder.start(timeslice)` の断片チャンクではなく、一定秒数録音して `stop()` した完成 Blob を送る。WebM 断片が独立ファイルとして成立せず ffmpeg/PyAV の decode に失敗するリスクを避けるため。
 - 前回確定テキストと次チャンクの先頭が重なる場合、単語単位の重複 prefix を落として表示する。
 - Backend は faster-whisper の VAD を有効化し、`ASR_VAD_MIN_SILENCE_MS` で無音判定の長さを調整できる。
+- 空文字の切り分けでは `ASR_DEBUG_KEEP_AUDIO=1` で受信音声と変換後 WAV を保存し、`ASR_VAD_FILTER=false` で VAD を一時的に無効化する。
 
 ## フェーズ別の仮定
 

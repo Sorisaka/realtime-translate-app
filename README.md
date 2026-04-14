@@ -95,8 +95,33 @@ docs/
 安定化用の環境変数:
 
 - `VITE_ASR_CHUNK_MS`: 既定値 `4000`
-- `VITE_ASR_MIN_CHUNK_BYTES`: 既定値 `1500`
+- `VITE_ASR_MIN_CHUNK_BYTES`: 既定値 `512`
 - `VITE_ASR_MAX_IN_FLIGHT`: 既定値 `1`
+
+backend の CORS 設定:
+
+- `ASR_ALLOWED_ORIGINS`: CORS 許可 origin のカンマ区切り
+
+既定では `http://127.0.0.1:5173`, `http://127.0.0.1:5174`, `http://localhost:5173`, `http://localhost:5174` を許可します。別ポートで frontend を起動する場合は backend 起動時に指定してください。
+
+```bash
+ASR_ALLOWED_ORIGINS=http://127.0.0.1:5174 python -m asr_service.server
+```
+
+ASR 入力の安定化:
+
+frontend は `MediaRecorder.start(timeslice)` の断片チャンクを直接送らず、既定で 4 秒録音して `stop()` した完成 Blob を backend に送ります。backend は `MediaRecorder` 由来の WebM/OGG 音声を ffmpeg で 16kHz mono WAV に変換してから faster-whisper に渡します。`ffmpeg` コマンドが PATH に必要です。別パスを使う場合は `ASR_FFMPEG_PATH=/path/to/ffmpeg` を指定してください。
+
+空文字が返る時の確認:
+
+```bash
+cd /home/yukikago/projects/realtime-translate-app/backend
+. .venv/bin/activate
+ASR_DEBUG_KEEP_AUDIO=1 ASR_VAD_FILTER=false ASR_MODEL_PATH=/home/yukikago/projects/realtime-translate-app/backend/models/tiny.en python -m asr_service.server
+```
+
+この状態で実 ASR を動かすと、レスポンスの `debug` に `input_bytes`, `content_type`, `decoded_duration_ms`, `vad_no_speech_detected` が含まれます。受信音声と変換後 WAV は `backend/debug-audio/` に保存されるので、`ffplay backend/debug-audio/<file>.wav` などで声が入っているか確認できます。
+`ASR_VAD_FILTER=false` は切り分け用です。無音でも Whisper が短い語を返す場合があるため、通常運用では既定値の `true` に戻してください。
 
 ## 完全オフライン運用
 
