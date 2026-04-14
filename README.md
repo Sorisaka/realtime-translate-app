@@ -112,6 +112,13 @@ ASR 入力の安定化:
 
 frontend は `MediaRecorder.start(timeslice)` の断片チャンクを直接送らず、既定で 4 秒録音して `stop()` した完成 Blob を backend に送ります。backend は `MediaRecorder` 由来の WebM/OGG 音声を ffmpeg で 16kHz mono WAV に変換してから faster-whisper に渡します。`ffmpeg` コマンドが PATH に必要です。別パスを使う場合は `ASR_FFMPEG_PATH=/path/to/ffmpeg` を指定してください。
 
+実 ASR モードでは、画面上に音声入力パネルが表示されます。
+
+- 入力デバイス: ブラウザが取得できるマイクを選択できます。変更すると録音ストリームが再作成されます。
+- 入力レベル: マイク入力が届いているかを簡易メーターで確認できます。
+- 状態: `マイク確認中`, `録音中`, `認識中`, `要確認` を表示します。
+- debug: backend が返す `input_bytes`, `decoded_duration_ms`, VAD 判定などを折りたたみ表示します。
+
 空文字が返る時の確認:
 
 ```bash
@@ -122,6 +129,38 @@ ASR_DEBUG_KEEP_AUDIO=1 ASR_VAD_FILTER=false ASR_MODEL_PATH=/home/yukikago/projec
 
 この状態で実 ASR を動かすと、レスポンスの `debug` に `input_bytes`, `content_type`, `decoded_duration_ms`, `vad_no_speech_detected` が含まれます。受信音声と変換後 WAV は `backend/debug-audio/` に保存されるので、`ffplay backend/debug-audio/<file>.wav` などで声が入っているか確認できます。
 `ASR_VAD_FILTER=false` は切り分け用です。無音でも Whisper が短い語を返す場合があるため、通常運用では既定値の `true` に戻してください。
+
+## 実講義音声テスト手順
+
+1. backend を起動する。
+
+```bash
+cd /home/yukikago/projects/realtime-translate-app/backend
+. .venv/bin/activate
+ASR_MODEL_PATH=/home/yukikago/projects/realtime-translate-app/backend/models/tiny.en python -m asr_service.server
+```
+
+2. frontend を実 ASR モードで起動する。
+
+```bash
+cd /home/yukikago/projects/realtime-translate-app
+VITE_SPEECH_SERVICE=local-asr npm run dev
+```
+
+3. ブラウザでマイク権限を許可する。
+4. 音声入力パネルで入力デバイスを選ぶ。
+5. 入力レベルが動くことを確認する。
+6. 英語音声を 30 秒から数分流し、`録音中` と `認識中` が交互に出ることを確認する。
+7. 字幕が増えない場合は `debug` を開き、`input_bytes`, `decoded_duration_ms`, `vad_no_speech_detected`, `segment_count` を確認する。
+
+典型的なトラブル:
+
+- `ASR backend に接続できません`: backend の起動、ポート、`VITE_ASR_ENDPOINT` を確認してください。
+- `マイク権限が拒否されています`: ブラウザのサイト設定でマイクを許可してください。
+- `利用できるマイクが見つかりません`: OS の入力デバイス接続を確認してください。
+- `backend で音声変換に失敗しました`: `ffmpeg` が PATH にあるか、`ASR_FFMPEG_PATH` を確認してください。
+- 入力レベルが動かない: 入力デバイスの選択、OS のマイク設定、ブラウザ権限を確認してください。
+- `vad_no_speech_detected: true`: 音量が小さいか無音扱いです。保存 WAV を確認し、必要なら一時的に `ASR_VAD_FILTER=false` で切り分けてください。
 
 ## 完全オフライン運用
 

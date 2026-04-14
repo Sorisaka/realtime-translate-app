@@ -106,6 +106,10 @@ button {
   min-height: 220px;
 }
 
+.asr-panel {
+  min-height: 0;
+}
+
 .panel-header {
   display: flex;
   align-items: center;
@@ -131,6 +135,117 @@ button {
 .live-pill.muted {
   background: rgba(235, 210, 127, 0.14);
   color: #f5dc8a;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #d8dfdc;
+  font-size: 12px;
+  font-weight: 740;
+}
+
+.status-recording {
+  background: rgba(128, 215, 177, 0.14);
+  color: #b9f2d4;
+}
+
+.status-recognizing,
+.status-requesting-microphone {
+  background: rgba(235, 210, 127, 0.14);
+  color: #f5dc8a;
+}
+
+.status-error {
+  background: rgba(255, 112, 112, 0.16);
+  color: #ffb4b4;
+}
+
+.field-label {
+  display: block;
+  margin: 0 0 8px;
+  color: #d8dfdc;
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.select-input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(8, 10, 12, 0.72);
+  color: #f2f4f3;
+  font: inherit;
+}
+
+.level-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin-top: 16px;
+  color: #b8c1bd;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.level-meter {
+  height: 12px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.level-meter-fill {
+  height: 100%;
+  min-width: 2px;
+  border-radius: 8px;
+  background: #80d7b1;
+  transition: width 90ms linear;
+}
+
+.asr-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+  color: #aeb8b3;
+  font-size: 12px;
+}
+
+.error-callout {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(255, 112, 112, 0.26);
+  border-radius: 8px;
+  background: rgba(255, 112, 112, 0.1);
+  color: #ffd1d1;
+  line-height: 1.5;
+}
+
+.debug-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.debug-block pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #d8dfdc;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .segment-list {

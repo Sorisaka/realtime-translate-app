@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import type { AsrRuntimeStatus } from "../domain/asrRuntime";
 import type { DictionaryEntry } from "../domain/dictionary";
 import { useLectureStream } from "../state/useLectureStream";
 import { useVocabularyNotebook } from "../state/useVocabularyNotebook";
+import { AsrStatusPanel } from "../ui/components/AsrStatusPanel";
 import { DictionaryPopover } from "../ui/components/DictionaryPopover";
 import { TranscriptPanel } from "../ui/components/TranscriptPanel";
 import { TranslationPanel } from "../ui/components/TranslationPanel";
 import { VocabularyPanel } from "../ui/components/VocabularyPanel";
-import { services } from "./services";
+import { createServices, isLocalAsrMode } from "./services";
 
 type PopoverState = {
   entry: DictionaryEntry | null;
@@ -15,7 +17,32 @@ type PopoverState = {
   isLoading: boolean;
 };
 
+const selectedDeviceStorageKey = "realtime-translate-app:selected-audio-device";
+
+const initialAsrStatus: AsrRuntimeStatus = {
+  phase: "idle",
+  inputLevel: 0,
+  inFlightRequests: 0,
+};
+
 export function App() {
+  const [selectedDeviceId, setSelectedDeviceId] = useState(() => window.localStorage.getItem(selectedDeviceStorageKey) ?? "");
+  const [asrStatus, setAsrStatus] = useState<AsrRuntimeStatus>(initialAsrStatus);
+  const handleAsrStatus = useCallback((status: AsrRuntimeStatus) => {
+    setAsrStatus((current) => ({
+      ...current,
+      ...status,
+      errorMessage: status.phase === "error" ? status.errorMessage : undefined,
+    }));
+  }, []);
+  const services = useMemo(
+    () =>
+      createServices({
+        selectedDeviceId: selectedDeviceId || undefined,
+        onAsrStatus: handleAsrStatus,
+      }),
+    [handleAsrStatus, selectedDeviceId],
+  );
   const { transcripts, translations, isRunning, setIsRunning } = useLectureStream(services.lectureStream);
   const vocabulary = useVocabularyNotebook(services.vocabularyNotebook);
   const [popover, setPopover] = useState<PopoverState>({ entry: null, position: null, isLoading: false });
@@ -27,6 +54,15 @@ export function App() {
 
     const entry = await services.dictionary.lookup(word);
     setPopover((current) => ({ ...current, entry, isLoading: false }));
+  };
+
+  const handleDeviceChange = (deviceId: string) => {
+    setSelectedDeviceId(deviceId);
+    if (deviceId) {
+      window.localStorage.setItem(selectedDeviceStorageKey, deviceId);
+    } else {
+      window.localStorage.removeItem(selectedDeviceStorageKey);
+    }
   };
 
   const latestTranscript = transcripts.at(-1)?.text ?? "Waiting for lecture audio...";
@@ -47,6 +83,12 @@ export function App() {
 
         <div className="content-grid">
           <div className="caption-stack">
+            <AsrStatusPanel
+              isEnabled={isLocalAsrMode}
+              status={asrStatus}
+              selectedDeviceId={selectedDeviceId}
+              onDeviceChange={handleDeviceChange}
+            />
             <TranscriptPanel segments={transcripts} onWordClick={handleWordClick} />
             <TranslationPanel segments={translations} />
           </div>

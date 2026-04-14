@@ -89,6 +89,14 @@ ASR_DEBUG_KEEP_AUDIO=1 ASR_VAD_FILTER=false ASR_MODEL_PATH=/home/yukikago/projec
 保存された WAV を再生して声が入っているか確認してください。
 `ASR_VAD_FILTER=false` は切り分け用です。無音でも Whisper が短い語を hallucinate する場合があるため、通常運用では既定値の `true` に戻してください。
 
+## 実講義音声テストの確認観点
+
+- frontend の音声入力パネルで入力レベルが動いているか。
+- `/api/asr/transcribe` のレスポンス debug で `input_bytes` が 0 より大きいか。
+- `decoded_duration_ms` が録音チャンク長に近いか。
+- `vad_no_speech_detected` が `true` の場合、保存 WAV に声が入っているか。
+- `segment_count` が 0 のままなら、VAD、音量、モデルサイズ、講義音声の明瞭さを順に確認する。
+
 ## CORS
 
 Vite の開発サーバーが `5173` または `5174` で起動しても使えるよう、既定で以下を許可しています。
