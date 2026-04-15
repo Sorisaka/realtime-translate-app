@@ -21,6 +21,7 @@ export const createServices = ({ selectedDeviceId, onAsrStatus }: CreateServices
         minChunkBytes: Number(import.meta.env.VITE_ASR_MIN_CHUNK_BYTES ?? 512),
         maxInFlightRequests: Number(import.meta.env.VITE_ASR_MAX_IN_FLIGHT ?? 1),
         deviceId: selectedDeviceId,
+        debugLoopback: import.meta.env.VITE_ASR_CLIENT_DEBUG === "1",
         onStatus: onAsrStatus,
       })
     : new MockSpeechRecognitionService();

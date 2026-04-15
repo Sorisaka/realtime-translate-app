@@ -30,6 +30,7 @@ class AsrConfig:
     ffmpeg_path: str = os.getenv("ASR_FFMPEG_PATH", "ffmpeg")
     ffprobe_path: str = os.getenv("ASR_FFPROBE_PATH", "ffprobe")
     ffmpeg_timeout_sec: int = int(os.getenv("ASR_FFMPEG_TIMEOUT_SEC", "20"))
+    debug_loopback: bool = env_bool("ASR_DEBUG_LOOPBACK", False)
     debug_keep_audio: bool = env_bool("ASR_DEBUG_KEEP_AUDIO", False)
     debug_dir: str = os.getenv("ASR_DEBUG_DIR", "debug-audio")
     allowed_origins: frozenset[str] = frozenset(

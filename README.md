@@ -50,6 +50,14 @@ cd /home/yukikago/projects/realtime-translate-app
 VITE_SPEECH_SERVICE=local-asr npm run dev
 ```
 
+ループバック入力の詳細ログを出す場合:
+
+```bash
+VITE_SPEECH_SERVICE=local-asr npm run dev -- --debug-loopback
+```
+
+ログの読み方は [Debug.md](Debug.md) を参照してください。
+
 デフォルトはモックです。既存 UI を壊さないため、React / Vite / TypeScript の依存は削除していません。
 
 ## 技術選定
@@ -155,6 +163,7 @@ VITE_SPEECH_SERVICE=local-asr npm run dev
 
 典型的なトラブル:
 
+- Chrome再生音を同じChrome系ページから loopback 取得すると無音になる場合があるため、再生元は Edge、アプリは Chrome のように再生ブラウザとアプリブラウザを分けてください。
 - `ASR backend に接続できません`: backend の起動、ポート、`VITE_ASR_ENDPOINT` を確認してください。
 - `マイク権限が拒否されています`: ブラウザのサイト設定でマイクを許可してください。
 - `利用できるマイクが見つかりません`: OS の入力デバイス接続を確認してください。

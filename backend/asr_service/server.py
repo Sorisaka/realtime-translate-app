@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import argparse
+from dataclasses import dataclass, replace
 import json
 import shutil
 import subprocess
@@ -11,13 +12,31 @@ from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from .config import CONFIG, AsrConfig
+from .config import CONFIG as DEFAULT_CONFIG
+from .config import AsrConfig
+
+CONFIG = DEFAULT_CONFIG
+asr_log_prefix = "[ASR server]"
 
 
 @dataclass(frozen=True)
 class TranscriptionResult:
     text: str
     segment_count: int
+
+
+@dataclass(frozen=True)
+class NormalizeResult:
+    command: list[str]
+    stdout: str
+    stderr: str
+    output_exists: bool
+    output_size: int | None
+
+
+def debug_log(message: str, data: dict[str, Any] | None = None) -> None:
+    if CONFIG.debug_loopback:
+        print(asr_log_prefix, message, data or {})
 
 
 class LocalAsrEngine:
@@ -38,7 +57,7 @@ class LocalAsrEngine:
         segment_texts = [segment.text.strip() for segment in segments]
         return TranscriptionResult(text=" ".join(segment_texts).strip(), segment_count=len(segment_texts))
 
-    def normalize_audio(self, input_path: Path, output_path: Path) -> None:
+    def normalize_audio(self, input_path: Path, output_path: Path) -> NormalizeResult:
         command = [
             self.config.ffmpeg_path,
             "-hide_banner",
@@ -55,9 +74,10 @@ class LocalAsrEngine:
             "wav",
             str(output_path),
         ]
+        debug_log("ffmpeg normalize start", {"input_path": str(input_path), "output_path": str(output_path), "command": command})
 
         try:
-            subprocess.run(
+            result = subprocess.run(
                 command,
                 check=True,
                 capture_output=True,
@@ -65,22 +85,45 @@ class LocalAsrEngine:
                 timeout=self.config.ffmpeg_timeout_sec,
             )
         except FileNotFoundError as exc:
+            debug_log("ffmpeg not found", {"ffmpeg_path": self.config.ffmpeg_path})
             raise RuntimeError(
                 f"ffmpeg was not found at `{self.config.ffmpeg_path}`. Install ffmpeg or set ASR_FFMPEG_PATH."
             ) from exc
         except subprocess.CalledProcessError as exc:
             stderr = exc.stderr.strip() or "no stderr"
+            debug_log("ffmpeg normalize failed", {"stderr": stderr, "stdout": exc.stdout.strip() if exc.stdout else ""})
             raise RuntimeError(f"ffmpeg failed to decode audio: {stderr}") from exc
         except subprocess.TimeoutExpired as exc:
+            debug_log("ffmpeg normalize timeout", {"timeout_sec": self.config.ffmpeg_timeout_sec})
             raise RuntimeError(f"ffmpeg timed out after {self.config.ffmpeg_timeout_sec} seconds") from exc
 
+        normalize_result = NormalizeResult(
+            command=command,
+            stdout=result.stdout.strip(),
+            stderr=result.stderr.strip(),
+            output_exists=output_path.exists(),
+            output_size=output_path.stat().st_size if output_path.exists() else None,
+        )
+        debug_log("ffmpeg normalize ok", normalize_result.__dict__)
+        return normalize_result
+
     def probe_duration_ms(self, audio_path: Path) -> int | None:
+        info = self.probe_stream_info(audio_path)
+        duration = info.get("duration") if info else None
+        if duration is None:
+            return None
+        try:
+            return round(float(duration) * 1000)
+        except (TypeError, ValueError):
+            return None
+
+    def probe_stream_info(self, audio_path: Path) -> dict[str, Any]:
         command = [
             self.config.ffprobe_path,
             "-v",
             "error",
-            "-show_entries",
-            "format=duration",
+            "-show_streams",
+            "-show_format",
             "-of",
             "json",
             str(audio_path),
@@ -93,15 +136,25 @@ class LocalAsrEngine:
                 text=True,
                 timeout=self.config.ffmpeg_timeout_sec,
             )
-        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            return None
+            data = json.loads(result.stdout)
+            streams = data.get("streams", [])
+            audio_stream = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
+            file_size = audio_path.stat().st_size if audio_path.exists() else None
+            if not audio_stream:
+                return {"path": str(audio_path), "size": file_size, "audio_stream": None, "format": data.get("format")}
 
-        try:
-            duration_sec = float(json.loads(result.stdout)["format"]["duration"])
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-            return None
-
-        return round(duration_sec * 1000)
+            return {
+                "path": str(audio_path),
+                "codec": audio_stream.get("codec_name"),
+                "sample_rate": audio_stream.get("sample_rate"),
+                "channels": audio_stream.get("channels"),
+                "channel_layout": audio_stream.get("channel_layout"),
+                "sample_fmt": audio_stream.get("sample_fmt"),
+                "duration": audio_stream.get("duration") or data.get("format", {}).get("duration"),
+                "size": data.get("format", {}).get("size") or file_size,
+            }
+        except Exception as exc:
+            return {"path": str(audio_path), "size": audio_path.stat().st_size if audio_path.exists() else None, "probe_error": str(exc)}
 
     def _load_model(self) -> Any:
         if self._model is None:
@@ -148,6 +201,7 @@ class AsrRequestHandler(BaseHTTPRequestHandler):
                 "ffmpegPath": CONFIG.ffmpeg_path,
                 "ffprobePath": CONFIG.ffprobe_path,
                 "ffmpegTimeoutSec": CONFIG.ffmpeg_timeout_sec,
+                "debugLoopback": CONFIG.debug_loopback,
                 "debugKeepAudio": CONFIG.debug_keep_audio,
                 "debugDir": CONFIG.debug_dir,
                 "allowedOrigins": sorted(CONFIG.allowed_origins),
@@ -174,32 +228,73 @@ class AsrRequestHandler(BaseHTTPRequestHandler):
             input_path = temp_path / f"input{suffix}"
             normalized_path = temp_path / "normalized.wav"
             input_path.write_bytes(audio_bytes)
+            input_stream_info = self.engine.probe_stream_info(input_path)
+            normalized_stream_info: dict[str, Any] | None = None
+            normalize_result: NormalizeResult | None = None
             normalized_duration_ms: int | None = None
+            normalized_file_size: int | None = None
             saved_debug_paths: dict[str, str] = {}
+            transcribe_path = input_path
+
+            debug_context: dict[str, Any] = {
+                "input_bytes": len(audio_bytes),
+                "content_type": content_type,
+                "content_length_header": content_length,
+                "input_path": str(input_path),
+                "input_suffix": suffix,
+                "input_stream_info": input_stream_info,
+            }
+            debug_log("request received", debug_context)
 
             try:
-                transcribe_path = input_path
                 if suffix != ".wav":
-                    self.engine.normalize_audio(input_path, normalized_path)
+                    normalize_result = self.engine.normalize_audio(input_path, normalized_path)
                     transcribe_path = normalized_path
+                normalized_stream_info = self.engine.probe_stream_info(transcribe_path)
                 normalized_duration_ms = self.engine.probe_duration_ms(transcribe_path)
+                normalized_file_size = transcribe_path.stat().st_size if transcribe_path.exists() else None
+                debug_log(
+                    "normalized audio info",
+                    {
+                        "normalized_path": str(transcribe_path),
+                        "decoded_duration_ms": normalized_duration_ms,
+                        "normalized_stream_info": normalized_stream_info,
+                    },
+                )
                 result = self.engine.transcribe(transcribe_path)
                 saved_debug_paths = self._keep_debug_audio(input_path, normalized_path if normalized_path.exists() else None)
             except Exception as exc:  # pragma: no cover - operational detail
-                self._send_json({"error": str(exc)}, status=500)
+                debug_context.update(
+                    {
+                        "normalized_path": str(transcribe_path),
+                        "normalized_stream_info": normalized_stream_info,
+                        "normalize_result": normalize_result.__dict__ if normalize_result else None,
+                        "exception": str(exc),
+                    }
+                )
+                debug_log("request failed", debug_context)
+                self._send_json({"error": str(exc), "debug": debug_context}, status=500)
                 return
 
         debug = {
             "input_bytes": len(audio_bytes),
             "content_type": content_type,
+            "content_length_header": content_length,
+            "input_path": str(input_path),
             "input_suffix": suffix,
+            "input_stream_info": input_stream_info,
+            "normalized_path": str(transcribe_path),
             "decoded_duration_ms": normalized_duration_ms,
+            "normalized_stream_info": normalized_stream_info,
+            "normalize_result": normalize_result.__dict__ if normalize_result else None,
+            "normalized_file_size": normalized_file_size,
             "vad_filter_enabled": CONFIG.vad_filter,
             "vad_no_speech_detected": CONFIG.vad_filter and result.segment_count == 0 and normalized_duration_ms is not None,
             "segment_count": result.segment_count,
             "debug_audio_saved": bool(saved_debug_paths),
             "debug_audio_paths": saved_debug_paths,
         }
+        debug_log("transcription result", debug)
         self._send_json({"text": result.text, "language": CONFIG.language, "status": "final", "debug": debug})
 
     def log_message(self, format: str, *args: Any) -> None:
@@ -258,13 +353,37 @@ class AsrRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the local ASR service.")
+    parser.add_argument("--debug-loopback", "--debug-local-asr", "--debug-asr", action="store_true", dest="debug_loopback")
+    parser.add_argument("--no-debug-loopback", action="store_true", dest="no_debug_loopback")
+    parser.add_argument("--debug-keep-audio", action="store_true", dest="debug_keep_audio")
+    parser.add_argument("--no-debug-keep-audio", action="store_true", dest="no_debug_keep_audio")
+    return parser.parse_args()
+
+
+def build_config(args: argparse.Namespace) -> AsrConfig:
+    config = DEFAULT_CONFIG
+    if args.debug_loopback:
+        config = replace(config, debug_loopback=True, debug_keep_audio=True)
+    if args.no_debug_loopback:
+        config = replace(config, debug_loopback=False)
+    if args.debug_keep_audio:
+        config = replace(config, debug_keep_audio=True)
+    if args.no_debug_keep_audio:
+        config = replace(config, debug_keep_audio=False)
+    return config
+
+
 def main() -> None:
+    global CONFIG
+    CONFIG = build_config(parse_args())
     AsrRequestHandler.engine = LocalAsrEngine(CONFIG)
     server = ThreadingHTTPServer((CONFIG.host, CONFIG.port), AsrRequestHandler)
     print(
         f"Local ASR service listening on http://{CONFIG.host}:{CONFIG.port} "
         f"(model={CONFIG.model_path or CONFIG.model_name}, device={CONFIG.device}, "
-        f"compute_type={CONFIG.compute_type})"
+        f"compute_type={CONFIG.compute_type}, debug_loopback={CONFIG.debug_loopback})"
     )
     server.serve_forever()
 

@@ -1,6 +1,6 @@
+import type { AsrRuntimeStatus } from "../domain/asrRuntime";
 import type { SpeechRecognitionService } from "../domain/services";
 import type { TranscriptSegment } from "../domain/transcript";
-import type { AsrRuntimeStatus } from "../domain/asrRuntime";
 
 type LocalAsrOptions = {
   endpoint: string;
@@ -8,19 +8,22 @@ type LocalAsrOptions = {
   minChunkBytes: number;
   maxInFlightRequests: number;
   deviceId?: string;
+  debugLoopback: boolean;
   onStatus?: (status: AsrRuntimeStatus) => void;
 };
 
 type AsrResponse = {
   text?: string;
   error?: string;
-  debug?: unknown;
+  debug?: Record<string, unknown>;
 };
 
 type TranscribeResult = {
   text: string;
-  debug?: unknown;
+  debug?: Record<string, unknown>;
 };
+
+const asrLogPrefix = "[ASR client]";
 
 export class LocalAsrSpeechRecognitionService implements SpeechRecognitionService {
   constructor(private readonly options: LocalAsrOptions) {}
@@ -33,7 +36,6 @@ export class LocalAsrSpeechRecognitionService implements SpeechRecognitionServic
     let segmentIndex = 0;
     let inFlightRequests = 0;
     let lastFinalText = "";
-    let hasLoggedMimeType = false;
     let currentLevel = 0;
     let cleanupLevelMeter: (() => void) | undefined;
 
@@ -52,29 +54,78 @@ export class LocalAsrSpeechRecognitionService implements SpeechRecognitionServic
       stream = await navigator.mediaDevices.getUserMedia({
         audio: this.options.deviceId ? { deviceId: { exact: this.options.deviceId } } : true,
       });
+      this.debugLog("getUserMedia stream acquired", {
+        selectedDeviceId: this.options.deviceId,
+        audioTrackCount: stream.getAudioTracks().length,
+        tracks: stream.getAudioTracks().map((track) => ({
+          label: track.label,
+          enabled: track.enabled,
+          muted: track.muted,
+          readyState: track.readyState,
+          settings: track.getSettings(),
+        })),
+      });
+
       cleanupLevelMeter = this.startLevelMeter(stream, (level) => {
         currentLevel = level;
         emitStatus({ phase: recorder?.state === "recording" ? "recording" : "idle" });
       });
-      console.info("Local ASR MediaRecorder support", this.getMimeTypeDiagnostics());
+      this.debugLog("MediaRecorder support", this.getMimeTypeDiagnostics());
 
       const recordSegment = () => {
         if (stopped || !stream) return;
 
         const mimeType = this.selectMimeType();
         const chunks: Blob[] = [];
+        const chunkByteLengths: number[] = [];
         const segmentStartedAt = Date.now();
-        recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-        if (!hasLoggedMimeType) {
-          console.info("Local ASR recorder mimeType", recorder.mimeType || "browser-default");
-          hasLoggedMimeType = true;
+
+        try {
+          recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        } catch (error) {
+          this.debugLog("MediaRecorder creation failed", { error: this.errorToString(error), mimeType }, "error");
+          throw error;
         }
+
+        this.debugLog("MediaRecorder created", {
+          selectedMimeType: mimeType || "browser-default",
+          recorderMimeType: recorder.mimeType || "browser-default",
+          recorderState: recorder.state,
+        });
         emitStatus({ phase: "recording", recorderMimeType: recorder.mimeType || "browser-default" });
 
+        recorder.onstart = () => {
+          this.debugLog("recorder.onstart", {
+            recorderState: recorder?.state,
+            recorderMimeType: recorder?.mimeType,
+          });
+        };
+
         recorder.ondataavailable = (event) => {
+          const chunkMeta = {
+            size: event.data.size,
+            type: event.data.type,
+            recorderMimeType: recorder?.mimeType,
+          };
+          this.debugLog("recorder.ondataavailable", chunkMeta);
+
           if (event.data.size > 0) {
+            void event.data.arrayBuffer().then((arrayBuffer) => {
+              chunkByteLengths.push(arrayBuffer.byteLength);
+              this.debugLog("chunk ArrayBuffer read", {
+                byteLength: arrayBuffer.byteLength,
+                chunkIndex: chunkByteLengths.length - 1,
+              });
+            });
             chunks.push(event.data);
+            return;
           }
+
+          this.debugLog("empty chunk received", chunkMeta, "warn");
+        };
+
+        recorder.onerror = (event) => {
+          this.debugLog("recorder.onerror", { error: event.error?.message ?? event.error?.name }, "error");
         };
 
         recorder.onstop = () => {
@@ -82,12 +133,40 @@ export class LocalAsrSpeechRecognitionService implements SpeechRecognitionServic
           const blobType = recorder?.mimeType || mimeType || chunks[0]?.type || "application/octet-stream";
           const audio = new Blob(chunks, { type: blobType });
 
+          this.debugLog("recorder.onstop", {
+            recorderState: recorder?.state,
+            chunkCount: chunks.length,
+            chunkSizes: chunks.map((chunk) => chunk.size),
+            chunkByteLengths,
+            finalBlobType: audio.type,
+            finalBlobSize: audio.size,
+            minChunkBytes: this.options.minChunkBytes,
+            inFlightRequests,
+          });
+
           if (!stopped) {
             recordSegment();
           }
 
-          if (stopped || audio.size < this.options.minChunkBytes) return;
-          if (inFlightRequests >= this.options.maxInFlightRequests) return;
+          if (stopped) return;
+
+          if (audio.size < this.options.minChunkBytes) {
+            this.debugLog(
+              "blob skipped because too small",
+              { audioSize: audio.size, minChunkBytes: this.options.minChunkBytes },
+              "warn",
+            );
+            return;
+          }
+
+          if (inFlightRequests >= this.options.maxInFlightRequests) {
+            this.debugLog(
+              "blob skipped because max in-flight requests reached",
+              { inFlightRequests, maxInFlightRequests: this.options.maxInFlightRequests },
+              "warn",
+            );
+            return;
+          }
 
           const id = `local-asr-${segmentIndex}`;
           segmentIndex += 1;
@@ -138,8 +217,10 @@ export class LocalAsrSpeechRecognitionService implements SpeechRecognitionServic
         };
 
         recorder.start();
+        this.debugLog("recorder.start called", { recorderState: recorder.state, chunkMs: this.options.chunkMs });
         stopTimerId = window.setTimeout(() => {
           if (recorder && recorder.state === "recording") {
+            this.debugLog("recorder.stop scheduled", { recorderState: recorder.state });
             recorder.stop();
           }
         }, this.options.chunkMs);
@@ -167,10 +248,17 @@ export class LocalAsrSpeechRecognitionService implements SpeechRecognitionServic
       }
       cleanupLevelMeter?.();
       stream?.getTracks().forEach((track) => track.stop());
+      this.debugLog("recording stopped", { stoppedTrackCount: stream?.getTracks().length ?? 0 });
     };
   }
 
   private async transcribe(audio: Blob): Promise<TranscribeResult> {
+    this.debugLog("sending audio", {
+      endpoint: this.options.endpoint,
+      blobSize: audio.size,
+      contentType: audio.type || "application/octet-stream",
+    });
+
     const response = await fetch(this.options.endpoint, {
       method: "POST",
       headers: { "Content-Type": audio.type || "application/octet-stream" },
@@ -178,13 +266,18 @@ export class LocalAsrSpeechRecognitionService implements SpeechRecognitionServic
     });
     const payload = (await response.json()) as AsrResponse;
 
+    this.debugLog("response received", {
+      status: response.status,
+      ok: response.ok,
+      payload,
+      debug: payload.debug,
+    });
+
     if (!response.ok || payload.error) {
       throw new Error(payload.error ?? `ASR request failed with status ${response.status}`);
     }
 
-    if (payload.debug) {
-      console.info("Local ASR debug", payload.debug);
-    }
+    this.debugLog("ASR debug payload", payload.debug);
 
     return { text: payload.text?.trim() ?? "", debug: payload.debug };
   }
@@ -200,13 +293,13 @@ export class LocalAsrSpeechRecognitionService implements SpeechRecognitionServic
 
     const audioContext = new AudioContextCtor();
     const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 512;
     const source = audioContext.createMediaStreamSource(stream);
     const data = new Uint8Array(analyser.fftSize);
     let frameId = 0;
     let stopped = false;
     let lastEmitAt = 0;
 
-    analyser.fftSize = 512;
     source.connect(analyser);
 
     const tick = () => {
@@ -238,6 +331,15 @@ export class LocalAsrSpeechRecognitionService implements SpeechRecognitionServic
   private getMimeTypeDiagnostics(): Record<string, boolean> {
     const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg"];
     return Object.fromEntries(candidates.map((type) => [type, MediaRecorder.isTypeSupported(type)]));
+  }
+
+  private debugLog(message: string, data?: unknown, level: "log" | "warn" | "error" = "log"): void {
+    if (!this.options.debugLoopback) return;
+    console[level](asrLogPrefix, message, data ?? "");
+  }
+
+  private errorToString(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 
   private toUserFacingError(error: unknown): string {

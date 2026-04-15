@@ -28,6 +28,14 @@ python -m asr_service.server
 
 既定では `http://127.0.0.1:8765` で起動します。
 
+ループバック入力の詳細ログと音声保存を有効化する場合:
+
+```bash
+python -m asr_service.server --debug-loopback
+```
+
+ログの読み方はリポジトリ直下の `Debug.md` を参照してください。
+
 ## 設定
 
 環境変数で変更できます。
@@ -44,6 +52,7 @@ python -m asr_service.server
 - `ASR_FFMPEG_PATH`: 既定値 `ffmpeg`
 - `ASR_FFPROBE_PATH`: 既定値 `ffprobe`
 - `ASR_FFMPEG_TIMEOUT_SEC`: 既定値 `20`
+- `ASR_DEBUG_LOOPBACK`: 既定値 `false`
 - `ASR_DEBUG_KEEP_AUDIO`: 既定値 `false`
 - `ASR_DEBUG_DIR`: 既定値 `debug-audio`
 - `ASR_ALLOWED_ORIGINS`: CORS 許可 origin のカンマ区切り。既定値は `http://127.0.0.1:5173,http://127.0.0.1:5174,http://localhost:5173,http://localhost:5174`
