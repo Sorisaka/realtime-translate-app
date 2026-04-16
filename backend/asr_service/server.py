@@ -26,6 +26,11 @@ class TranscriptionResult:
 
 
 @dataclass(frozen=True)
+class TranslationResult:
+    text: str
+
+
+@dataclass(frozen=True)
 class NormalizeResult:
     command: list[str]
     stdout: str
@@ -176,8 +181,48 @@ class LocalAsrEngine:
         return self._model
 
 
+class LocalTranslationEngine:
+    def __init__(self, config: AsrConfig) -> None:
+        self.config = config
+        self._translations: dict[tuple[str, str], Any] = {}
+
+    def translate(self, text: str, source_language: str, target_language: str) -> TranslationResult:
+        if not text.strip():
+            return TranslationResult(text="")
+
+        translation = self._load_translation(source_language, target_language)
+        return TranslationResult(text=translation.translate(text).strip())
+
+    def _load_translation(self, source_language: str, target_language: str) -> Any:
+        cache_key = (source_language, target_language)
+        if cache_key in self._translations:
+            return self._translations[cache_key]
+
+        try:
+            from argostranslate import translate
+        except ImportError as exc:
+            raise RuntimeError(
+                "argostranslate is not installed. Run "
+                "`python -m pip install -r backend/requirements.txt` in backend/.venv."
+            ) from exc
+
+        installed_languages = translate.get_installed_languages()
+        source = next((language for language in installed_languages if language.code == source_language), None)
+        target = next((language for language in installed_languages if language.code == target_language), None)
+        if source is None or target is None:
+            raise RuntimeError(
+                f"Argos Translate language pair {source_language}->{target_language} is not installed. "
+                "Install a local model package before using /api/translate."
+            )
+
+        translation = source.get_translation(target)
+        self._translations[cache_key] = translation
+        return translation
+
+
 class AsrRequestHandler(BaseHTTPRequestHandler):
     engine: LocalAsrEngine
+    translation_engine: LocalTranslationEngine
 
     def do_OPTIONS(self) -> None:
         self._send_empty(204)
@@ -204,12 +249,18 @@ class AsrRequestHandler(BaseHTTPRequestHandler):
                 "debugLoopback": CONFIG.debug_loopback,
                 "debugKeepAudio": CONFIG.debug_keep_audio,
                 "debugDir": CONFIG.debug_dir,
+                "translationSourceLanguage": CONFIG.translation_source_language,
+                "translationTargetLanguage": CONFIG.translation_target_language,
                 "allowedOrigins": sorted(CONFIG.allowed_origins),
             }
         )
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/translate":
+            self._handle_translate()
+            return
+
         if path != "/api/asr/transcribe":
             self._send_json({"error": "not found"}, status=404)
             return
@@ -297,6 +348,64 @@ class AsrRequestHandler(BaseHTTPRequestHandler):
         debug_log("transcription result", debug)
         self._send_json({"text": result.text, "language": CONFIG.language, "status": "final", "debug": debug})
 
+    def _handle_translate(self) -> None:
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if content_length <= 0:
+            self._send_json({"error": "empty translation body"}, status=400)
+            return
+
+        try:
+            payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            self._send_json({"error": f"invalid translation JSON: {exc}"}, status=400)
+            return
+
+        source_language = str(payload.get("sourceLanguage") or CONFIG.translation_source_language)
+        target_language = str(payload.get("targetLanguage") or CONFIG.translation_target_language)
+        segments = payload.get("segments")
+        if not isinstance(segments, list):
+            self._send_json({"error": "segments must be a list"}, status=400)
+            return
+
+        translations: list[dict[str, Any]] = []
+        try:
+            for segment in segments:
+                if not isinstance(segment, dict):
+                    raise RuntimeError("each segment must be an object")
+                segment_id = str(segment.get("id") or uuid4().hex)
+                text = str(segment.get("text") or "")
+                result = self.translation_engine.translate(text, source_language, target_language)
+                translations.append(
+                    {
+                        "id": f"translation-{segment_id}",
+                        "sourceSegmentId": segment_id,
+                        "text": result.text,
+                        "status": segment.get("status") or "final",
+                    }
+                )
+        except Exception as exc:  # pragma: no cover - operational detail
+            debug_log(
+                "translation failed",
+                {
+                    "source_language": source_language,
+                    "target_language": target_language,
+                    "segment_count": len(segments),
+                    "exception": str(exc),
+                },
+            )
+            self._send_json({"error": str(exc)}, status=500)
+            return
+
+        debug_log(
+            "translation result",
+            {
+                "source_language": source_language,
+                "target_language": target_language,
+                "segment_count": len(translations),
+            },
+        )
+        self._send_json({"translations": translations})
+
     def log_message(self, format: str, *args: Any) -> None:
         return
 
@@ -379,6 +488,7 @@ def main() -> None:
     global CONFIG
     CONFIG = build_config(parse_args())
     AsrRequestHandler.engine = LocalAsrEngine(CONFIG)
+    AsrRequestHandler.translation_engine = LocalTranslationEngine(CONFIG)
     server = ThreadingHTTPServer((CONFIG.host, CONFIG.port), AsrRequestHandler)
     print(
         f"Local ASR service listening on http://{CONFIG.host}:{CONFIG.port} "

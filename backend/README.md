@@ -55,6 +55,8 @@ python -m asr_service.server --debug-loopback
 - `ASR_DEBUG_LOOPBACK`: 既定値 `false`
 - `ASR_DEBUG_KEEP_AUDIO`: 既定値 `false`
 - `ASR_DEBUG_DIR`: 既定値 `debug-audio`
+- `TRANSLATION_SOURCE_LANGUAGE`: 既定値 `en`
+- `TRANSLATION_TARGET_LANGUAGE`: 既定値 `ja`
 - `ASR_ALLOWED_ORIGINS`: CORS 許可 origin のカンマ区切り。既定値は `http://127.0.0.1:5173,http://127.0.0.1:5174,http://localhost:5173,http://localhost:5174`
 
 `tiny.en` は初回利用時にモデル取得が必要になる場合があります。完全オフライン運用では、事前にモデルをローカルキャッシュへ配置してください。
@@ -97,6 +99,24 @@ ASR_DEBUG_KEEP_AUDIO=1 ASR_VAD_FILTER=false ASR_MODEL_PATH=/home/yukikago/projec
 
 保存された WAV を再生して声が入っているか確認してください。
 `ASR_VAD_FILTER=false` は切り分け用です。無音でも Whisper が短い語を hallucinate する場合があるため、通常運用では既定値の `true` に戻してください。
+
+## 翻訳モデル
+
+`POST /api/translate` は Argos Translate のローカルモデルを使います。依存を入れたあと、英日モデルを取得してください。
+
+```bash
+cd /home/yukikago/projects/realtime-translate-app
+. backend/.venv/bin/activate
+python backend/scripts/download-argos-translate-model.py --source en --target ja
+```
+
+確認例:
+
+```bash
+curl -s http://127.0.0.1:8765/api/translate \
+  -H 'Content-Type: application/json' \
+  -d '{"sourceLanguage":"en","targetLanguage":"ja","segments":[{"id":"s1","text":"This is a local translation test.","status":"final"}]}'
+```
 
 ## 実講義音声テストの確認観点
 

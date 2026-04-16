@@ -193,7 +193,15 @@ ASR_MODEL_PATH=/home/yukikago/projects/realtime-translate-app/backend/models/tin
 
 ## 翻訳モデル接続
 
-翻訳モデル本体はまだ実装していません。次フェーズでローカル翻訳サービスを追加するための API 契約は [docs/translation-api-contract.md](docs/translation-api-contract.md) に整理しています。
+frontend は既定で backend の `POST /api/translate` を使います。backend 側は Argos Translate のローカル英日モデルを使うため、初回のみモデル取得が必要です。
+
+```bash
+cd /home/yukikago/projects/realtime-translate-app
+. backend/.venv/bin/activate
+python backend/scripts/download-argos-translate-model.py --source en --target ja
+```
+
+一時的に従来のモック翻訳へ戻す場合は `VITE_TRANSLATION_SERVICE=mock` を指定してください。ASR overlap と検証手順は [docs/ASR_IMPROVEMENT.md](docs/ASR_IMPROVEMENT.md) に整理しています。
 
 ## 次フェーズ候補
 

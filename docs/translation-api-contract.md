@@ -1,6 +1,6 @@
 # Translation API Contract
 
-フェーズ2後半以降でローカル翻訳モデルを接続するための API 契約案です。クラウド API、有料 API、外部 SaaS は使わず、Python 側のローカルサービスとして追加する前提です。
+ローカル翻訳モデル接続用の API 契約です。クラウド API、有料 API、外部 SaaS は使わず、Python backend の `POST /api/translate` として提供します。
 
 ## Endpoint
 
@@ -57,12 +57,13 @@ Content-Type: application/json
 
 ## Adapter Placement
 
-- Frontend: `TranslationService` を実装する `LocalTranslationService` を `src/infra/` に追加する。
-- Backend: `backend/translation_service/` を追加し、ASR と同じく `backend/.venv` の依存だけを使う。
-- 切替: `VITE_TRANSLATION_SERVICE=mock | local` のような環境変数を追加する。
+- Frontend: `TranslationService` を実装する `LocalTranslationService` を `src/infra/` に置く。
+- Backend: ASR と同じ `backend/asr_service/server.py` の HTTP server に `/api/translate` を追加する。
+- 切替: `VITE_TRANSLATION_SERVICE=mock` の時だけ `MockTranslationService` を使う。既定は local translation。
 
-## 初期候補
+## Local Model
 
-- OPUS-MT 系など無料・ローカル実行可能な翻訳モデルを候補にする。
-- モデルのライセンスと配布条件を確認してから採用する。
-- 初回ネット接続が必要な場合は、ASR と同様に `backend/models/` へ事前配置する手順を用意する。
+- 既定実装は Argos Translate の英日ローカルモデルを使う。
+- 依存は `backend/requirements.txt` に置く。
+- 言語モデルはリポジトリに含めず、`backend/scripts/download-argos-translate-model.py` で取得する。
+- 初回ネット接続が必要。取得後はローカルで翻訳する。

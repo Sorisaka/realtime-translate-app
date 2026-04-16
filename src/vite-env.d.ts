@@ -4,9 +4,12 @@ interface ImportMetaEnv {
   readonly VITE_SPEECH_SERVICE?: "mock" | "local-asr";
   readonly VITE_ASR_ENDPOINT?: string;
   readonly VITE_ASR_CHUNK_MS?: string;
+  readonly VITE_ASR_OVERLAP_MS?: string;
   readonly VITE_ASR_MIN_CHUNK_BYTES?: string;
   readonly VITE_ASR_MAX_IN_FLIGHT?: string;
   readonly VITE_ASR_CLIENT_DEBUG?: string;
+  readonly VITE_TRANSLATION_ENDPOINT?: string;
+  readonly VITE_TRANSLATION_SERVICE?: "mock" | "local";
 }
 
 interface ImportMeta {

@@ -9,7 +9,7 @@ export class MockLectureStreamService implements LectureStreamService {
 
   start(onUpdate: (update: LectureUpdate) => void): () => void {
     return this.speechRecognition.start((transcript) => {
-      if (!transcript.text.trim()) {
+      if (!transcript.text.trim() || transcript.status === "partial") {
         onUpdate({
           transcript,
           translation: {
@@ -22,9 +22,23 @@ export class MockLectureStreamService implements LectureStreamService {
         return;
       }
 
-      void this.translation.translate(transcript).then((translation) => {
-        onUpdate({ transcript, translation });
-      });
+      void this.translation
+        .translate(transcript)
+        .then((translation) => {
+          onUpdate({ transcript, translation });
+        })
+        .catch((error) => {
+          console.error("Translation request failed", error);
+          onUpdate({
+            transcript,
+            translation: {
+              id: `translation-${transcript.id}`,
+              sourceSegmentId: transcript.id,
+              text: "翻訳に失敗しました。原文の文字起こしは継続します。",
+              status: transcript.status,
+            },
+          });
+        });
     });
   }
 }

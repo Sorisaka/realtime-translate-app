@@ -33,6 +33,8 @@ class AsrConfig:
     debug_loopback: bool = env_bool("ASR_DEBUG_LOOPBACK", False)
     debug_keep_audio: bool = env_bool("ASR_DEBUG_KEEP_AUDIO", False)
     debug_dir: str = os.getenv("ASR_DEBUG_DIR", "debug-audio")
+    translation_source_language: str = os.getenv("TRANSLATION_SOURCE_LANGUAGE", "en")
+    translation_target_language: str = os.getenv("TRANSLATION_TARGET_LANGUAGE", "ja")
     allowed_origins: frozenset[str] = frozenset(
         origin.strip()
         for origin in os.getenv("ASR_ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS).split(",")
